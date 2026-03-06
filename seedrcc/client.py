@@ -173,7 +173,7 @@ class Seedr:
         token: Optional[Token] = None,
         on_token_refresh: Optional[Callable[[Token], None]] = None,
         httpx_client: Optional[httpx.Client] = None,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
         proxy: Optional[Dict[str, str]] = None,
         **httpx_kwargs: Any,
     ) -> "Seedr":
@@ -214,6 +214,7 @@ class Seedr:
             # Skip login if token already has cookies [cookie-auth]
             if token is not None and token.cookies:
                 cookie_token = token
+                client.cookies.update(token.cookies)
             else:
                 cookie_token = cls._cookie_login(
                     client, username, password, token, on_token_refresh
@@ -873,10 +874,7 @@ class Seedr:
     ) -> Dict[str, Any]:
         """Sends an authenticated request using cookies, with automatic session refresh on 401."""
         headers = {"accept": "application/json"}
-        request_kwargs: Dict[str, Any] = {
-            "cookies": self._token.cookies,
-            "headers": headers,
-        }
+        request_kwargs: Dict[str, Any] = {"headers": headers}
         if method != "get" and data is not None:
             request_kwargs["data"] = {k: v for k, v in data.items() if v is not None}
         if files:
@@ -886,7 +884,6 @@ class Seedr:
 
         if response.status_code == 401:
             self._refresh_cookie_session()
-            request_kwargs["cookies"] = self._token.cookies
             response = self._make_http_request(
                 self._client, method, url, **request_kwargs
             )
@@ -934,6 +931,8 @@ class Seedr:
             )
 
         cookies = {c.name: c.value for c in response.cookies.jar}
+        client.cookies.clear()
+        client.cookies.update(cookies)
         if not cookies:
             raise AuthenticationError(
                 "No cookies received from login response.", response=response
@@ -958,7 +957,6 @@ class Seedr:
             raise AuthenticationError(
                 "No credentials available to refresh cookie session."
             )
-
         self._token = self._cookie_login(
             self._client,
             self._username,

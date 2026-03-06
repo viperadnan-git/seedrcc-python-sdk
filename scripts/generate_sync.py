@@ -73,8 +73,11 @@ def generate_sync(source: str) -> str:
     out = out.replace("_read_torrent_file_async", "_read_torrent_file")
 
     # 1c. Simplify Coroutine type hints for sync callables.
+    # Coroutine[Any, Any, Dict[str, Any]] -> Dict[str, Any]
+    # (.*?\]) captures the return type including its closing bracket,
+    # then \] matches Coroutine's ], then \s*\] matches Callable's ].
     out = re.sub(
-        r"Callable\[\s*\[httpx\.AsyncClient\],\s*Coroutine\[Any,\s*Any,\s*(.*?)\]\s*\]",
+        r"Callable\[\s*\[httpx\.AsyncClient\],\s*Coroutine\[Any,\s*Any,\s*(.*?\])\]\s*\]",
         r"Callable[[httpx.Client], \1]",
         out,
         flags=re.DOTALL,
