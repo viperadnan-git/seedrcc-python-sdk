@@ -26,9 +26,9 @@ class AsyncSeedr:
         from seedrcc import AsyncSeedr, Token
 
         async def main():
-            # Load a previously saved token from a Base64 string
-            b64_string = "eydhY2Nlc3NfdG9rZW4nOiAnbmV2ZXIgZ29ubmEgZ2l2ZSB5b3UgdXAnfQ=="
-            token = Token.from_base64(b64_string)
+            # Load a previously saved token from a JSON string
+            token_string = '{"access_token": "...", "refresh_token": "..."}'
+            token = Token.from_json(token_string)
 
             # Initialize the client and make a request
             async with AsyncSeedr(token=token) as client:
@@ -908,8 +908,7 @@ class AsyncSeedr:
         files: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Sends an authenticated request using cookies, with automatic session refresh on 401."""
-        headers = {"accept": "application/json"}
-        request_kwargs: Dict[str, Any] = {"headers": headers}
+        request_kwargs: Dict[str, Any] = {"headers": _constants.COOKIE_HEADERS}
         if method != "get" and data is not None:
             request_kwargs["data"] = {k: v for k, v in data.items() if v is not None}
         if files:
@@ -959,7 +958,11 @@ class AsyncSeedr:
             username=username, password=password
         )
         response = await AsyncSeedr._make_http_request(
-            client, "post", _constants.COOKIE_LOGIN_URL, json=payload.to_dict()
+            client,
+            "post",
+            _constants.COOKIE_LOGIN_URL,
+            json=payload.to_dict(),
+            headers=_constants.COOKIE_HEADERS,
         )
 
         if not response.is_success:

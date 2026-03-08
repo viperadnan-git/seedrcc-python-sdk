@@ -891,8 +891,7 @@ class Seedr:
         files: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Sends an authenticated request using cookies, with automatic session refresh on 401."""
-        headers = {"accept": "application/json"}
-        request_kwargs: Dict[str, Any] = {"headers": headers}
+        request_kwargs: Dict[str, Any] = {"headers": _constants.COOKIE_HEADERS}
         if method != "get" and data is not None:
             request_kwargs["data"] = {k: v for k, v in data.items() if v is not None}
         if files:
@@ -940,7 +939,11 @@ class Seedr:
             username=username, password=password
         )
         response = Seedr._make_http_request(
-            client, "post", _constants.COOKIE_LOGIN_URL, json=payload.to_dict()
+            client,
+            "post",
+            _constants.COOKIE_LOGIN_URL,
+            json=payload.to_dict(),
+            headers=_constants.COOKIE_HEADERS,
         )
 
         if not response.is_success:
