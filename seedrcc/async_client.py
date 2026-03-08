@@ -7,7 +7,13 @@ import anyio
 import httpx
 
 from . import _constants, _request_models, models
-from .exceptions import APIError, AuthenticationError, NetworkError, ServerError
+from .exceptions import (
+    APIError,
+    AuthenticationError,
+    JSONDecodeAPIError,
+    NetworkError,
+    ServerError,
+)
 from .token import Token
 
 
@@ -110,7 +116,7 @@ class AsyncSeedr:
             try:
                 response_data = response.json()
             except json.JSONDecodeError as e:
-                raise APIError("Invalid JSON response from API.", response=None) from e
+                raise JSONDecodeAPIError(response=response) from e
         return models.DeviceCode.from_dict(response_data)
 
     @classmethod
@@ -783,9 +789,7 @@ class AsyncSeedr:
         try:
             data = response.json()
         except json.JSONDecodeError as e:
-            raise APIError(
-                "Invalid JSON response from progress URL.", response=response
-            ) from e
+            raise JSONDecodeAPIError(response=response) from e
         return models.TorrentProgress.from_dict(data)
 
     async def change_name(self, name: str, password: str) -> models.APIResult:
@@ -871,7 +875,7 @@ class AsyncSeedr:
         try:
             data = response.json()
         except json.JSONDecodeError as e:
-            raise APIError("Invalid JSON response from API.", response=None) from e
+            raise JSONDecodeAPIError(response=response) from e
 
         if isinstance(data, dict) and data.get("error") == "expired_token":
             await self._refresh_access_token()
@@ -882,7 +886,7 @@ class AsyncSeedr:
             try:
                 data = response.json()
             except json.JSONDecodeError as e:
-                raise APIError("Invalid JSON response from API.", response=None) from e
+                raise JSONDecodeAPIError(response=response) from e
 
         if response.is_client_error:
             if response.status_code == 401:
@@ -924,7 +928,7 @@ class AsyncSeedr:
         try:
             resp_data = response.json()
         except json.JSONDecodeError as e:
-            raise APIError("Invalid JSON response from API.", response=response) from e
+            raise JSONDecodeAPIError(response=response) from e
 
         if response.is_client_error:
             raise APIError("API request failed.", response=response)
@@ -1026,7 +1030,7 @@ class AsyncSeedr:
         try:
             response_data = response.json()
         except json.JSONDecodeError as e:
-            raise APIError("Invalid JSON response from API.", response=None) from e
+            raise JSONDecodeAPIError(response=response) from e
 
         if "access_token" not in response_data:
             raise AuthenticationError(
@@ -1130,7 +1134,7 @@ class AsyncSeedr:
                 )
             return data
         except json.JSONDecodeError as e:
-            raise APIError("Invalid JSON response from API.", response=None) from e
+            raise JSONDecodeAPIError(response=response) from e
 
     @staticmethod
     async def _make_http_request(

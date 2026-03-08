@@ -39,7 +39,7 @@ build-backend = "hatchling.build"
 source = "vcs"
 
 [tool.nizm.hooks]
-generate-sync = { cmd = "uv run python scripts/generate_sync.py", glob = "seedrcc/async_client.py" }
+generate-sync = { cmd = "uv run python scripts/generate_sync.py && git add seedrcc/client.py", glob = "seedrcc/async_client.py" }
 ruff = { cmd = "uvx ruff check --fix {staged_files} && uvx ruff format {staged_files}", glob = "*.py" }
 
 [tool.ruff.lint]

@@ -14,34 +14,51 @@ class APIError(SeedrError):
 
     Attributes:
         response (Optional[httpx.Response]): The full HTTP response object.
-        code (Optional[int]): The custom error code from the API response body.
         error_type (Optional[str]): The type of error from the API response body (e.g., 'parsing_error').
     """
 
     def __init__(
         self,
-        default_message: str = "An API error occurred.",
+        message: str = "An API error occurred.",
         response: Optional[httpx.Response] = None,
     ) -> None:
         self.response = response
-        self.code: Optional[int] = None
         self.error_type: Optional[str] = None
 
         if response:
-            try:
-                data = response.json()
-                self.code = data.get("code")
-                self.error_type = data.get("result") or data.get("reason_phrase")
-                if data.get("error"):
-                    default_message = data.get("error")
-                elif self.error_type:
-                    default_message = f"Reason: {self.error_type}"
-                else:
-                    default_message = f"{response.status_code} {response.reason_phrase}"
-            except json.JSONDecodeError:
-                pass
+            message = self._parse_response(response, message)
 
-        super().__init__(default_message)
+        super().__init__(message)
+
+    def _parse_response(self, response: httpx.Response, default_message: str) -> str:
+        try:
+            data = response.json()
+            self.error_type = data.get("result") or data.get("reason_phrase")
+            if data.get("error"):
+                return data.get("error")
+            elif self.error_type:
+                return f"reason={self.error_type}"
+            else:
+                return f"{response.status_code} {response.reason_phrase}"
+        except json.JSONDecodeError:
+            return default_message
+
+
+class JSONDecodeAPIError(APIError):
+    """Raised when the API returns a response that cannot be decoded as JSON."""
+
+    def __init__(
+        self,
+        response: Optional[httpx.Response] = None,
+    ) -> None:
+        super().__init__("API returned non-JSON response", response)
+        self.error_type = "json_decode_error"
+
+    def _parse_response(self, response: httpx.Response, default_message: str) -> str:
+        text = (
+            response.text[:200] + "..." if len(response.text) > 200 else response.text
+        )
+        return f'{default_message}: "{text}"'
 
 
 class ServerError(SeedrError):
