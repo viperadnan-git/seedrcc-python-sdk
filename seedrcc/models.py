@@ -199,7 +199,7 @@ class AccountInfo(_BaseModel):
 
     username: str
     user_id: int
-    premium: int
+    premium: bool
     package_id: int
     package_name: str
     space_used: int
@@ -209,7 +209,7 @@ class AccountInfo(_BaseModel):
     wishlist: list
     invites: int
     invites_accepted: int
-    max_invites: int
+    max_invites: int = 0
 
 
 @dataclass(frozen=True)
@@ -225,8 +225,8 @@ class UserSettings(_BaseModel):
     @classmethod
     def from_dict(cls, data: dict) -> "UserSettings":
         instance = cls(
-            result=data.get("result", False),
-            code=data.get("code", 0),
+            result=data.get("result", True),
+            code=data.get("code", 200),
             settings=AccountSettings.from_dict(data.get("settings", {})),
             account=AccountInfo.from_dict(data.get("account", {})),
             country=data.get("country", ""),

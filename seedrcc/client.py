@@ -381,7 +381,10 @@ class Seedr:
             print(settings.account.username)
             ```
         """
-        response_data = self._api_request("get", "get_settings")
+        if self._token.cookies is not None:
+            response_data = self._cookie_api_request("get", "/account/settings")
+        else:
+            response_data = self._api_request("get", "get_settings")
         return models.UserSettings.from_dict(response_data)
 
     def get_memory_bandwidth(self) -> models.MemoryBandwidth:
@@ -419,8 +422,9 @@ class Seedr:
         payload = _request_models.ListContentsPayload(content_id=folder_id)
         # Prefer cookie auth for list_contents [cookie-auth]
         if self._token.cookies is not None:
-            url = f"{_constants.COOKIE_BASE_URL}/fs/folder/{folder_id}/items"
-            response_data = self._cookie_api_request("get", url)
+            response_data = self._cookie_api_request(
+                "get", f"/fs/folder/{folder_id}/items"
+            )
         else:
             response_data = self._api_request(
                 "post", "list_contents", data=payload.to_dict()
@@ -484,9 +488,8 @@ class Seedr:
                 data["folder"] = cookie_folder
             else:
                 data["folder_id"] = cookie_folder
-            url = f"{_constants.COOKIE_BASE_URL}/task"
             response_data = self._cookie_api_request(
-                "post", url, data=data, files=files
+                "post", "/task", data=data, files=files
             )
         else:
             payload = _request_models.AddTorrentPayload(
@@ -886,11 +889,12 @@ class Seedr:
     def _cookie_api_request(
         self,
         method: str,
-        url: str,
+        path: str,
         data: Optional[Dict[str, Any]] = None,
         files: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Sends an authenticated request using cookies, with automatic session refresh on 401."""
+        url = f"{_constants.COOKIE_BASE_URL}{path}"
         request_kwargs: Dict[str, Any] = {"headers": _constants.COOKIE_HEADERS}
         if method != "get" and data is not None:
             request_kwargs["data"] = {k: v for k, v in data.items() if v is not None}
