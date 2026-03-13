@@ -381,6 +381,7 @@ class Seedr:
             print(settings.account.username)
             ```
         """
+        # Prefer cookie auth for get_settings [cookie-auth]
         if self._token.cookies is not None:
             response_data = self._cookie_api_request("get", "/account/settings")
         else:
@@ -733,6 +734,47 @@ class Seedr:
         response_data = self._api_request(
             "post", "remove_wishlist", data=payload.to_dict()
         )
+        return models.APIResult.from_dict(response_data)
+
+    # Cookie-only: batch delete [cookie-auth]
+    def batch_delete(
+        self,
+        file_ids: Optional[List[str]] = None,
+        folder_ids: Optional[List[str]] = None,
+        torrent_ids: Optional[List[str]] = None,
+    ) -> models.APIResult:
+        """
+        Delete multiple items at once. Requires cookie authentication.
+
+        Args:
+            file_ids: List of file IDs to delete.
+            folder_ids: List of folder IDs to delete.
+            torrent_ids: List of torrent IDs to delete.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            result = client.batch_delete(
+                folder_ids=["123", "456"],
+                file_ids=["789"],
+            )
+            ```
+        """
+        if self._token.cookies is None:
+            raise AuthenticationError("batch_delete requires cookie authentication.")
+        items = []
+        for id in file_ids or []:
+            items.append({"type": "file", "id": id})
+        for id in folder_ids or []:
+            items.append({"type": "folder", "id": id})
+        for id in torrent_ids or []:
+            items.append({"type": "torrent", "id": id})
+        if not items:
+            raise ValueError("At least one ID must be provided.")
+        data = {"delete_arr": json.dumps(items)}
+        response_data = self._cookie_api_request("post", "/fs/batch/delete", data=data)
         return models.APIResult.from_dict(response_data)
 
     def get_devices(self) -> List[models.Device]:
