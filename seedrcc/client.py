@@ -1,4 +1,4 @@
-# This file is auto-generated from async_client.py — do not edit directly.
+# This file is auto-generated — do not edit directly.
 # Regenerate with: python scripts/generate_sync.py
 import json
 from dataclasses import replace

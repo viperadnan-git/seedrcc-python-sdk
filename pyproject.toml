@@ -24,6 +24,7 @@ classifiers = [
 dependencies = [
     "anyio>=4.12.1",
     "httpx>=0.28.1",
+    "pydantic>=2.13.1",
 ]
 
 [project.urls]
@@ -39,7 +40,7 @@ build-backend = "hatchling.build"
 source = "vcs"
 
 [tool.nizm.hooks]
-generate-sync = { cmd = "uv run python scripts/generate_sync.py && uvx ruff check --fix seedrcc/client.py && uvx ruff format seedrcc/client.py && git add seedrcc/client.py", glob = "seedrcc/async_client.py" }
+generate-sync = { cmd = "uv run python scripts/generate_sync.py", glob = "seedrcc/async_client.py,seedrcc/public/aio/*", outputs=["seedrcc/client.py", "seedrcc/public/sync/*"] }
 ruff = { cmd = "uvx ruff check --fix {staged_files} && uvx ruff format {staged_files}", glob = "*.py" }
 
 [tool.ruff.lint]

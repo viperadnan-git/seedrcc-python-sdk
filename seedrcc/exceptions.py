@@ -120,3 +120,22 @@ class TokenError(SeedrError):
     """Raised for errors related to token serialization or deserialization."""
 
     pass
+
+
+class ScopeError(SeedrError):
+    """Raised when an API call requires a scope not granted to the current token.
+
+    Attributes:
+        missing_scope (Optional[str]): The scope reported as missing by the server.
+        response (Optional[httpx.Response]): The full HTTP response object.
+    """
+
+    def __init__(
+        self,
+        message: str = "The current token is missing a required scope.",
+        missing_scope: Optional[str] = None,
+        response: Optional[httpx.Response] = None,
+    ) -> None:
+        self.missing_scope = missing_scope
+        self.response = response
+        super().__init__(message)

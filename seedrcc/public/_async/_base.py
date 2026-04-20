@@ -1,0 +1,199 @@
+"""AsyncBaseClient — owns the HTTP client, token state, and refresh pipeline.
+
+All mixins assume an instance of this as `self`. See `_protocols.AsyncClientProtocol`.
+"""
+
+import json
+import time
+from typing import Any, Dict, Optional, TypeVar
+
+import anyio
+import httpx
+
+from ...exceptions import (
+    AuthenticationError,
+    JSONDecodeAPIError,
+)
+from .. import _constants, _request_models
+from ..token import Token
+from ..token_handlers import FileTokenHandler, TokenHandler
+from ._http import make_http_request, raise_for_status
+
+TBase = TypeVar("TBase", bound="AsyncBaseClient")
+
+
+class AsyncBaseClient:
+    """Owns the client state, HTTP request pipeline, and refresh logic."""
+
+    _token: Token
+    _handler: TokenHandler
+    _client: httpx.AsyncClient
+    _manages_client_lifecycle: bool
+
+    def __init__(
+        self,
+        token: Optional[Token] = None,
+        token_handler: Optional[TokenHandler] = None,
+        httpx_client: Optional[httpx.AsyncClient] = None,
+        timeout: float = 30.0,
+        proxy: Optional[Dict[str, str]] = None,
+        **httpx_kwargs: Any,
+    ) -> None:
+        """Initializes the asynchronous client.
+
+        Args:
+            token: Optional explicit Token. If provided, it is saved through the handler.
+            token_handler: Persistence backend. Defaults to `FileTokenHandler()` (JSON at
+                `./.cache/seedr_token.json`). Pass `MemoryTokenHandler()` for in-process only.
+            httpx_client: Optional pre-configured `httpx.AsyncClient`.
+            timeout: Network timeout in seconds (ignored if `httpx_client` is given).
+            proxy: Optional proxy config (ignored if `httpx_client` is given).
+            **httpx_kwargs: Extra kwargs for `httpx.AsyncClient` (ignored if `httpx_client`).
+        """
+        self._handler: TokenHandler = token_handler or FileTokenHandler()
+        if token is not None:
+            self._token: Token = token
+        else:
+            loaded = self._handler.load()
+            self._token: Token = loaded if loaded is not None else Token()
+
+        if httpx_client is not None:
+            self._client = httpx_client
+            self._manages_client_lifecycle = False
+        else:
+            httpx_kwargs.setdefault("timeout", timeout)
+            httpx_kwargs.setdefault("proxy", proxy)
+            self._client = httpx.AsyncClient(**httpx_kwargs)
+            self._manages_client_lifecycle = True
+
+    @property
+    def token(self) -> Token:
+        """The current Token in memory."""
+        return self._token
+
+    @property
+    def token_handler(self) -> TokenHandler:
+        """The persistence backend in use."""
+        return self._handler
+
+    # ── Refresh ─────────────────────────────────────────────────────────────
+
+    async def _refresh_access_token(self) -> None:
+        """POST /oauth/token with grant_type=refresh_token. Rotates the stored token."""
+        if not (self._token.refresh_token and self._token.client_id):
+            raise AuthenticationError(
+                "Missing refresh_token or client_id — cannot refresh."
+            )
+        payload = _request_models.RefreshTokenRequest(
+            client_id=self._token.client_id,
+            refresh_token=self._token.refresh_token,
+        )
+        response = await make_http_request(
+            self._client,
+            "post",
+            _constants.TOKEN_URL,
+            data=payload.model_dump(exclude_none=True),
+        )
+        if not response.is_success:
+            raise AuthenticationError("Token refresh failed.", response=response)
+        try:
+            data = response.json()
+        except json.JSONDecodeError as e:
+            raise JSONDecodeAPIError(response=response) from e
+        if "access_token" not in data or not data["access_token"]:
+            raise AuthenticationError(
+                "Refresh response missing access_token.", response=response
+            )
+        self._token = Token(
+            access_token=data["access_token"],
+            refresh_token=data.get("refresh_token", self._token.refresh_token),
+            client_id=self._token.client_id,
+            scope=data.get("scope", self._token.scope),
+            expires_at=int(time.time()) + int(data.get("expires_in", 3600)),
+        )
+        self._handler.save(self._token)
+
+    # ── HTTP core ───────────────────────────────────────────────────────────
+
+    async def _request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        auth: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        """Send a request against PUBLIC_API with bearer auth and refresh handling.
+
+        If `auth=False`, no Authorization header is sent (public OAuth endpoints).
+        """
+        response = await self._raw_request(method, endpoint, auth=auth, **kwargs)
+        if response.status_code == 204:
+            return None
+        try:
+            return response.json()
+        except json.JSONDecodeError as e:
+            raise JSONDecodeAPIError(response=response) from e
+
+    async def _raw_request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        auth: bool = True,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Same as `_request` but returns the raw httpx.Response (for binary downloads)."""
+        url = f"{_constants.PUBLIC_API}{endpoint}"
+        if auth:
+            if self._token.is_expired() and self._token.refresh_token:
+                await self._refresh_access_token()
+            if not self._token.access_token:
+                raise AuthenticationError(
+                    "No access_token available — authenticate first."
+                )
+            headers = dict(kwargs.pop("headers", {}) or {})
+            headers["Authorization"] = f"Bearer {self._token.access_token}"
+            headers.setdefault("Accept", "application/json")
+            kwargs["headers"] = headers
+
+        response = await make_http_request(self._client, method, url, **kwargs)
+
+        if (
+            auth
+            and response.status_code == 401
+            and self._token.refresh_token
+            and self._token.client_id
+        ):
+            await self._refresh_access_token()
+            kwargs["headers"]["Authorization"] = f"Bearer {self._token.access_token}"
+            response = await make_http_request(self._client, method, url, **kwargs)
+
+        raise_for_status(response)
+        return response
+
+    # ── Misc ────────────────────────────────────────────────────────────────
+
+    async def _read_torrent_file_async(self, torrent_file: str) -> Dict[str, Any]:
+        """Asynchronously reads a torrent file from a local path or remote URL into memory."""
+        if torrent_file.startswith(("http://", "https://")):
+            async with httpx.AsyncClient() as client:
+                response = await client.get(torrent_file)
+                response.raise_for_status()
+                return {"torrent_file": response.content}
+        else:
+            path = anyio.Path(torrent_file)
+            content = await path.read_bytes()
+            return {"torrent_file": content}
+
+    # ── Lifecycle ───────────────────────────────────────────────────────────
+
+    async def close(self) -> None:
+        if self._manages_client_lifecycle:
+            await self._client.aclose()
+
+    async def __aenter__(self: TBase) -> TBase:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        await self.close()
