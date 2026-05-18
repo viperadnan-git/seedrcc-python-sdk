@@ -1,5 +1,6 @@
-# This file is auto-generated — do not edit directly.
-# Regenerate with: python scripts/generate_sync.py
+# DO NOT EDIT — generated from seedrcc/public/_async/_tasks.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
 """TasksMixin — torrent tasks (add, progress, pause/resume/delete)."""
 
 from typing import Any, Dict, List, Optional, Union

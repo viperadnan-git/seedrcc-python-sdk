@@ -1,4 +1,4 @@
-"""AsyncSeedr — the composed asynchronous client."""
+"""Composed Seedr public API client."""
 
 from typing import Dict, Optional
 
@@ -58,7 +58,7 @@ class AsyncSeedr(  # pyright: ignore[reportUnsafeMultipleInheritance]
         """Shared cookie session for PAT + device management.
 
         Logs in and scrapes the CSRF token once on first use; every subsequent
-        method call reuses that state. Use as an async context manager:
+        method call reuses that state. Use as a context manager:
 
             async with AsyncSeedr.cookie_session(email, password) as sess:
                 devices = await sess.list_devices()

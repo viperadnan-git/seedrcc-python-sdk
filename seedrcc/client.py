@@ -1,5 +1,6 @@
-# This file is auto-generated — do not edit directly.
-# Regenerate with: python scripts/generate_sync.py
+# DO NOT EDIT — generated from seedrcc/async_client.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
 import json
 from dataclasses import replace
 from typing import Any, Callable, Dict, List, Literal, Optional, Type
@@ -49,7 +50,7 @@ class Seedr:
         password: Optional[str] = None,
         **httpx_kwargs: Any,
     ) -> None:
-        """Initializes the synchronous client with an existing token.
+        """Initializes the client with an existing token.
 
         Args:
             token: An authenticated `Token` object.

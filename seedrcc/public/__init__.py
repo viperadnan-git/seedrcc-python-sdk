@@ -5,7 +5,7 @@ Legacy /oauth_test/* clients remain available as `seedrcc.Seedr` and `seedrcc.As
 
 Async-first design: the source of truth is `seedrcc.public._async.*`, and the
 synchronous mirrors under `seedrcc.public._sync.*` are generated from them via
-`scripts/generate_sync.py`.
+`scripts/gen_sync.py`.
 """
 
 from .. import exceptions

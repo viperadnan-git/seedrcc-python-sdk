@@ -1,5 +1,6 @@
-# This file is auto-generated — do not edit directly.
-# Regenerate with: python scripts/generate_sync.py
+# DO NOT EDIT — generated from seedrcc/public/_async/_protocols.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
 """Protocol describing what mixin methods can assume about `self`.
 
 Used only as a *structural* type-hint on `self:` parameters — mixins do NOT
@@ -21,7 +22,7 @@ from ..token_handlers import TokenHandler
 
 
 class ClientProtocol(Protocol):
-    """What a mixin can assume about `self` on the synchronous client."""
+    """What a mixin can assume about `self` on the client."""
 
     # State
     _token: Token

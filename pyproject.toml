@@ -33,14 +33,20 @@ dependencies = [
 "Bug Tracker" = "https://github.com/viperadnan-git/seedrcc-python-sdk/issues"
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling", "hatch-vcs", "unasync>=0.6", "tokenize-rt>=6.0", "ruff>=0.15.5"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
 
+[tool.hatch.build.hooks.custom]
+path = "scripts/hatch_build.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["seedrcc"]
+
 [tool.nizm.hooks]
-generate-sync = { cmd = "uv run python scripts/generate_sync.py", glob = "seedrcc/async_client.py,seedrcc/public/aio/*", outputs=["seedrcc/client.py", "seedrcc/public/sync/*"] }
+generate_sync = { cmd = "uv run python scripts/gen_sync.py", glob = ["seedrcc/async_client.py", "seedrcc/public/_async/**/*.py", "scripts/gen_sync.py"], outputs = ["seedrcc/client.py", "seedrcc/public/_sync/**/*.py"] }
 ruff = { cmd = "uvx ruff check --fix {staged_files} && uvx ruff format {staged_files}", glob = "*.py" }
 
 [tool.ruff.lint]
@@ -50,6 +56,8 @@ fixable = ["F401", "I"]
 [dependency-groups]
 dev = [
     "ruff>=0.15.5",
+    "unasync>=0.6",
+    "tokenize-rt>=6.0",
 ]
 docs = [
   "griffe-fieldz>=0.3.0",

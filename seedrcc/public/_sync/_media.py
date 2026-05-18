@@ -1,5 +1,6 @@
-# This file is auto-generated — do not edit directly.
-# Regenerate with: python scripts/generate_sync.py
+# DO NOT EDIT — generated from seedrcc/public/_async/_media.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
 """MediaMixin — downloads, archives, presentations, subtitles, scrape."""
 
 import os

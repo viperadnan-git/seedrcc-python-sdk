@@ -1,4 +1,4 @@
-"""Module-level async HTTP helpers shared by the base client and auth mixins.
+"""Module-level HTTP helpers shared by the base client and auth mixins.
 
 Kept at module scope so classmethod/staticmethod helpers on mixins can call
 them directly without needing `cls` to resolve to the final composed class.

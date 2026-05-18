@@ -1,5 +1,6 @@
-# This file is auto-generated — do not edit directly.
-# Regenerate with: python scripts/generate_sync.py
+# DO NOT EDIT — generated from seedrcc/public/_async/_auth.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
 """AuthMixin — bearer-token factories (from_pat, from_device_code),
 refresh + revoke, and the public `get_device_code` entry point.
 

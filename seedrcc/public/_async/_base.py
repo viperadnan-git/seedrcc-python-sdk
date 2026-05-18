@@ -39,7 +39,7 @@ class AsyncBaseClient:
         proxy: Optional[Dict[str, str]] = None,
         **httpx_kwargs: Any,
     ) -> None:
-        """Initializes the asynchronous client.
+        """Initializes the client.
 
         Args:
             token: Optional explicit Token. If provided, it is saved through the handler.
@@ -175,7 +175,7 @@ class AsyncBaseClient:
     # ── Misc ────────────────────────────────────────────────────────────────
 
     async def _read_torrent_file_async(self, torrent_file: str) -> Dict[str, Any]:
-        """Asynchronously reads a torrent file from a local path or remote URL into memory."""
+        """Reads a torrent file from a local path or remote URL into memory."""
         if torrent_file.startswith(("http://", "https://")):
             async with httpx.AsyncClient() as client:
                 response = await client.get(torrent_file)

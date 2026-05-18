@@ -1,5 +1,6 @@
-# This file is auto-generated — do not edit directly.
-# Regenerate with: python scripts/generate_sync.py
+# DO NOT EDIT — generated from seedrcc/public/_async/_base.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
 """BaseClient — owns the HTTP client, token state, and refresh pipeline.
 
 All mixins assume an instance of this as `self`. See `_protocols.ClientProtocol`.
@@ -40,7 +41,7 @@ class BaseClient:
         proxy: Optional[Dict[str, str]] = None,
         **httpx_kwargs: Any,
     ) -> None:
-        """Initializes the synchronous client.
+        """Initializes the client.
 
         Args:
             token: Optional explicit Token. If provided, it is saved through the handler.

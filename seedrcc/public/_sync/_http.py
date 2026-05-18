@@ -1,6 +1,7 @@
-# This file is auto-generated — do not edit directly.
-# Regenerate with: python scripts/generate_sync.py
-"""Module-level async HTTP helpers shared by the base client and auth mixins.
+# DO NOT EDIT — generated from seedrcc/public/_async/_http.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
+"""Module-level HTTP helpers shared by the base client and auth mixins.
 
 Kept at module scope so classmethod/staticmethod helpers on mixins can call
 them directly without needing `cls` to resolve to the final composed class.

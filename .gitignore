@@ -172,3 +172,6 @@ test.py
 
 # Claude Code
 .claude/settings.local.json
+
+# Local development scratch
+.local/

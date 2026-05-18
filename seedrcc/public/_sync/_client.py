@@ -1,6 +1,7 @@
-# This file is auto-generated — do not edit directly.
-# Regenerate with: python scripts/generate_sync.py
-"""Seedr — the composed synchronous client."""
+# DO NOT EDIT — generated from seedrcc/public/_async/_client.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
+"""Composed Seedr public API client."""
 
 from typing import Dict, Optional
 
@@ -56,7 +57,7 @@ class Seedr(  # pyright: ignore[reportUnsafeMultipleInheritance]
         """Shared cookie session for PAT + device management.
 
         Logs in and scrapes the CSRF token once on first use; every subsequent
-        method call reuses that state. Use as an async context manager:
+        method call reuses that state. Use as a context manager:
 
             with Seedr.cookie_session(email, password) as sess:
                 devices = sess.list_devices()

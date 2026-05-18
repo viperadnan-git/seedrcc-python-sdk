@@ -54,7 +54,7 @@ class AsyncSeedr:
         password: Optional[str] = None,
         **httpx_kwargs: Any,
     ) -> None:
-        """Initializes the asynchronous client with an existing token.
+        """Initializes the client with an existing token.
 
         Args:
             token: An authenticated `Token` object.
@@ -1099,7 +1099,7 @@ class AsyncSeedr:
         return models.RefreshTokenResult.from_dict(response_data)
 
     async def _read_torrent_file_async(self, torrent_file: str) -> Dict[str, Any]:
-        """Asynchronously reads a torrent file from a local path or a remote URL into memory."""
+        """Reads a torrent file from a local path or a remote URL into memory."""
         if torrent_file.startswith(("http://", "https://")):
             async with httpx.AsyncClient() as client:
                 response = await client.get(torrent_file)
@@ -1168,7 +1168,7 @@ class AsyncSeedr:
         url: str,
         **httpx_kwargs: Any,
     ) -> Dict[str, Any]:
-        """Handles the common logic for making an asynchronous authentication request."""
+        """Handles the common logic for making an authentication request."""
         response = await cls._make_http_request(client, method, url, **httpx_kwargs)
 
         if not response.is_success:

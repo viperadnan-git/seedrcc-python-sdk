@@ -1,5 +1,6 @@
-# This file is auto-generated — do not edit directly.
-# Regenerate with: python scripts/generate_sync.py
+# DO NOT EDIT — generated from seedrcc/public/_async/_cookie_session.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
 """CookieSession — shared cookie login for PAT and device management.
 
 Session lifecycle is split into two idempotent steps:
@@ -84,7 +85,7 @@ class CookieSession:
 
     Raises `AuthenticationError` on construction if none of the above are provided.
     Login/cookie-attach happens lazily on first use; CSRF scrape happens once,
-    only when a method that needs it runs. Use as an async context manager.
+    only when a method that needs it runs. Use as a context manager.
     """
 
     def __init__(

@@ -19,7 +19,7 @@ from ..token_handlers import TokenHandler
 
 
 class AsyncClientProtocol(Protocol):
-    """What a mixin can assume about `self` on the asynchronous client."""
+    """What a mixin can assume about `self` on the client."""
 
     # State
     _token: Token
