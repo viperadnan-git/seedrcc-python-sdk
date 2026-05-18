@@ -1,3 +1,3 @@
-# Generated from _async/ + async_client.py by scripts/gen_sync.py — edits are overwritten.
-seedrcc/client.py            linguist-generated=true
-seedrcc/public/_sync/**      linguist-generated=true
+# Generated from _async/ + legacy/async_client.py by scripts/gen_sync.py — edits are overwritten.
+src/seedrcc/legacy/client.py     linguist-generated=true
+src/seedrcc/_sync/**             linguist-generated=true

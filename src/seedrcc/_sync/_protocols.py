@@ -1,0 +1,37 @@
+# DO NOT EDIT — generated from src/seedrcc/_async/_protocols.py by scripts/gen_sync.py.
+# Run `python scripts/gen_sync.py` (or rebuild the package) to regenerate.
+
+"""Protocol describing what mixin methods can assume about `self`.
+
+Used only as a *structural* type-hint on `self:` parameters — mixins do NOT
+inherit from this Protocol. The `BaseClient` concrete class (and thus
+the composed `Seedr`) satisfies this Protocol by providing the listed
+attributes via instance/class annotations.
+
+Only the symbols accessed by mixin methods are listed here. The `token` /
+`token_handler` public properties are intentionally excluded because no
+mixin reads them via `self` — they exist for external callers.
+"""
+
+from typing import Any, Callable, Protocol
+
+import httpx
+
+from ..token import Token
+from ._token_handlers import TokenHandler
+
+
+class ClientProtocol(Protocol):
+    """What a mixin can assume about `self` on the client."""
+
+    # State
+    _token: Token
+    _handler: TokenHandler
+    _client: httpx.Client
+
+    # HTTP + refresh pipeline. Typed as Callable attribute annotations so no
+    # method body is created at runtime.
+    _request: Callable[..., Any]
+    _raw_request: Callable[..., Any]
+    _refresh_access_token: Callable[[], Any]
+    _read_torrent_file: Callable[[str], Any]

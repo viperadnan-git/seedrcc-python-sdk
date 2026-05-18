@@ -1,0 +1,1223 @@
+"""Legacy /oauth_test/* async client, kept for backward compatibility."""
+
+import inspect
+import json
+from dataclasses import replace
+from typing import Any, Callable, Coroutine, Dict, List, Literal, Optional, Type
+
+import anyio
+import httpx
+
+from ..errors import (
+    APIError,
+    AuthenticationError,
+    JSONDecodeAPIError,
+    NetworkError,
+    ServerError,
+)
+from . import _request_models, constants, models
+from .token import Token
+
+
+class AsyncSeedr:
+    """Asynchronous client for interacting with the Seedr API.
+
+    Example:
+        ```python
+        import asyncio
+        from seedrcc import AsyncSeedr, Token
+
+        async def main():
+            # Load a previously saved token from a JSON string
+            token_string = '{"access_token": "...", "refresh_token": "..."}'
+            token = Token.from_json(token_string)
+
+            # Initialize the client and make a request
+            async with AsyncSeedr(token=token) as client:
+                settings = await client.get_settings()
+                print(f"Hello, {settings.account.username}")
+
+        if __name__ == "__main__":
+            asyncio.run(main())
+        ```
+
+    """
+
+    _client: httpx.AsyncClient
+    _manages_client_lifecycle: bool
+
+    def __init__(
+        self,
+        token: Token,
+        on_token_refresh: Optional[Callable[[Token], None]] = None,
+        httpx_client: Optional[httpx.AsyncClient] = None,
+        timeout: float = 30.0,
+        proxy: Optional[Dict[str, str]] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        **httpx_kwargs: Any,
+    ) -> None:
+        """Initializes the client with an existing token.
+
+        Args:
+            token: An authenticated `Token` object.
+            on_token_refresh: An optional callback function that is called with the new
+                `Token` object when the session is refreshed.
+            httpx_client: An optional, pre-configured `httpx.AsyncClient` instance.
+            timeout: The timeout for network requests in seconds.
+            proxy: An optional dictionary of proxy to use for requests.
+            username: The user's Seedr username (email), used for cookie session refresh.
+            password: The user's Seedr password, used for cookie session refresh.
+            **httpx_kwargs: Optional keyword arguments to pass to the `httpx.AsyncClient` constructor.
+                These are ignored if `httpx_client` is provided.
+
+        """
+        self._token = token
+        self._on_token_refresh = on_token_refresh
+        self._username = username  # [cookie-auth]
+        self._password = password  # [cookie-auth]
+        if httpx_client is not None:
+            self._client = httpx_client
+            self._manages_client_lifecycle = False
+        else:
+            httpx_kwargs.setdefault("timeout", timeout)
+            httpx_kwargs.setdefault("proxy", proxy)
+            self._client = httpx.AsyncClient(**httpx_kwargs)
+            self._manages_client_lifecycle = True
+
+    @property
+    def token(self) -> Token:
+        """Get the current authentication token used by the client."""
+        return self._token
+
+    @staticmethod
+    async def get_device_code() -> models.DeviceCode:
+        """Gets the device and user codes required for authorization.
+
+        This is the first step in the device authentication flow.
+
+        Returns:
+            A `DeviceCode` object containing the codes needed for the next step.
+
+        Example:
+            ```python
+            from seedrcc import AsyncSeedr
+
+            codes = await AsyncSeedr.get_device_code()
+            print(f"Go to {codes.verification_url} and enter {codes.user_code}")
+            ```
+
+        """
+        params = _request_models.GetDeviceCodeParams()
+        async with httpx.AsyncClient() as client:
+            response = await AsyncSeedr._make_http_request(
+                client, "get", constants.DEVICE_CODE_URL, params=params.to_dict()
+            )
+
+            if not response.is_success:
+                raise APIError("Failed to get device code.", response=response)
+
+            try:
+                response_data = response.json()
+            except json.JSONDecodeError as e:
+                raise JSONDecodeAPIError(response=response) from e
+        return models.DeviceCode.from_dict(response_data)
+
+    @classmethod
+    async def from_password(
+        cls: Type["AsyncSeedr"],
+        username: str,
+        password: str,
+        on_token_refresh: Optional[Callable[[Token], None]] = None,
+        httpx_client: Optional[httpx.AsyncClient] = None,
+        timeout: float = 30.0,
+        proxy: Optional[Dict[str, str]] = None,
+        **httpx_kwargs: Any,
+    ) -> "AsyncSeedr":
+        """Creates a new client by authenticating with a username and password.
+
+        Args:
+            username: The user's Seedr username (email).
+            password: The user's Seedr password.
+            on_token_refresh: A callback function that is called with the new
+                Token object when the session is refreshed.
+            httpx_client: An optional, pre-configured `httpx.AsyncClient` instance.
+            timeout: The timeout for network requests in seconds.
+            proxy: A dictionary of proxy to use for requests.
+            **httpx_kwargs: Optional keyword arguments to pass to the `httpx.AsyncClient` constructor.
+                These are ignored if `httpx_client` is provided.
+
+        Returns:
+            An initialized `AsyncSeedr` client instance.
+
+        Example:
+            ```python
+            client = await AsyncSeedr.from_password("your_email@example.com", "your_password")
+            ```
+
+        """
+
+        async def auth_callable(client: httpx.AsyncClient) -> Dict[str, Any]:
+            """Prepare and execute the authentication request."""
+            payload = _request_models.PasswordLoginPayload(
+                username=username, password=password
+            )
+            return await cls._authenticate_and_get_token_data(
+                client,
+                "post",
+                constants.TOKEN_URL,
+                data=payload.to_dict(),
+            )
+
+        return await cls._initialize_client(
+            auth_callable,
+            lambda r: {},
+            on_token_refresh,
+            httpx_client,
+            timeout=timeout,
+            proxy=proxy,
+            **httpx_kwargs,
+        )
+
+    # ── Cookie Authentication [cookie-auth] ─────────────────────────────────
+
+    @classmethod
+    async def from_login(
+        cls: Type["AsyncSeedr"],
+        username: str,
+        password: str,
+        token: Optional[Token] = None,
+        on_token_refresh: Optional[Callable[[Token], None]] = None,
+        httpx_client: Optional[httpx.AsyncClient] = None,
+        timeout: float = 60.0,
+        proxy: Optional[Dict[str, str]] = None,
+        **httpx_kwargs: Any,
+    ) -> "AsyncSeedr":
+        """Creates a new client by logging in with a username and password using cookie-based authentication.
+
+        Args:
+            username: The user's Seedr username (email).
+            password: The user's Seedr password.
+            token: An optional existing Token with OAuth credentials (access_token, refresh_token,
+                device_code). Cookies from the login will be merged into this token, enabling both
+                cookie and OAuth authentication on the same client.
+            on_token_refresh: A callback function that is called with the new
+                Token object when the session is refreshed.
+            httpx_client: An optional, pre-configured `httpx.AsyncClient` instance.
+            timeout: The timeout for network requests in seconds.
+            proxy: A dictionary of proxy to use for requests.
+            **httpx_kwargs: Optional keyword arguments to pass to the `httpx.AsyncClient` constructor.
+                These are ignored if `httpx_client` is provided.
+
+        Returns:
+            An initialized `AsyncSeedr` client instance using cookie-based authentication.
+
+        Example:
+            ```python
+            # Cookie-only auth
+            client = await AsyncSeedr.from_login("email", "password")
+
+            # Combined cookie + OAuth auth
+            client = await AsyncSeedr.from_login("email", "password", token=Token(access_token="..."))
+            ```
+
+        """
+        httpx_kwargs.setdefault("timeout", timeout)
+        httpx_kwargs.setdefault("proxy", proxy)
+        client = httpx_client or httpx.AsyncClient(**httpx_kwargs)
+        success = False
+        try:
+            # Skip login if token already has cookies [cookie-auth]
+            if token is not None and token.cookies:
+                cookie_token = token
+                client.cookies.update(token.cookies)
+            else:
+                cookie_token = await cls._cookie_login(
+                    client, username, password, token, on_token_refresh
+                )
+            instance = cls(
+                cookie_token,
+                on_token_refresh=on_token_refresh,
+                httpx_client=client,
+                username=username,
+                password=password,
+                **httpx_kwargs,
+            )
+            success = True
+            return instance
+        finally:
+            if httpx_client is None and not success:
+                await client.aclose()
+
+    @classmethod
+    async def from_device_code(
+        cls: Type["AsyncSeedr"],
+        device_code: str,
+        on_token_refresh: Optional[Callable[[Token], None]] = None,
+        httpx_client: Optional[httpx.AsyncClient] = None,
+        timeout: float = 30.0,
+        proxy: Optional[Dict[str, str]] = None,
+        **httpx_kwargs: Any,
+    ) -> "AsyncSeedr":
+        """Creates a new client by authorizing with a device code.
+
+        This is the second step in the device authentication flow, after getting the
+        codes from `AsyncSeedr.get_device_code()`.
+
+        Args:
+            device_code: The device code obtained from `get_device_code()`.
+            on_token_refresh: A callback function that is called with the new
+                Token object when the session is refreshed.
+            httpx_client: An optional, pre-configured `httpx.AsyncClient` instance.
+            timeout: The timeout for network requests in seconds.
+            proxy: A dictionary of proxy to use for requests.
+            **httpx_kwargs: Optional keyword arguments to pass to the `httpx.AsyncClient` constructor.
+                These are ignored if `httpx_client` is provided.
+
+        Returns:
+            An initialized `AsyncSeedr` client instance.
+
+        Example:
+            ```python
+            client = await AsyncSeedr.from_device_code("your_device_code")
+            ```
+
+        """
+
+        async def auth_callable(client: httpx.AsyncClient) -> Dict[str, Any]:
+            """Prepare and execute the device authorization request."""
+            params = _request_models.DeviceCodeAuthParams(device_code=device_code)
+            return await cls._authenticate_and_get_token_data(
+                client,
+                "get",
+                constants.DEVICE_AUTHORIZE_URL,
+                params=params.to_dict(),
+            )
+
+        return await cls._initialize_client(
+            auth_callable,
+            lambda r: {"device_code": device_code},
+            on_token_refresh,
+            httpx_client,
+            timeout=timeout,
+            proxy=proxy,
+            **httpx_kwargs,
+        )
+
+    @classmethod
+    async def from_refresh_token(
+        cls: Type["AsyncSeedr"],
+        refresh_token: str,
+        on_token_refresh: Optional[Callable[[Token], None]] = None,
+        httpx_client: Optional[httpx.AsyncClient] = None,
+        timeout: float = 30.0,
+        proxy: Optional[Dict[str, str]] = None,
+        **httpx_kwargs: Any,
+    ) -> "AsyncSeedr":
+        """Creates a new client by using an existing refresh token.
+
+        Args:
+            refresh_token: A valid refresh token.
+            on_token_refresh: A callback function that is called with the new
+                Token object when the session is refreshed.
+            httpx_client: An optional, pre-configured `httpx.AsyncClient` instance.
+            timeout: The timeout for network requests in seconds.
+            proxy: A dictionary of proxy to use for requests.
+            **httpx_kwargs: Optional keyword arguments to pass to the `httpx.AsyncClient` constructor.
+                These are ignored if `httpx_client` is provided.
+
+        Returns:
+            An initialized `AsyncSeedr` client instance.
+
+        Example:
+            ```python
+            client = await AsyncSeedr.from_refresh_token("your_refresh_token")
+            ```
+
+        """
+
+        async def auth_callable(client: httpx.AsyncClient) -> Dict[str, Any]:
+            """Prepare and execute the token refresh request."""
+            payload = _request_models.RefreshTokenPayload(refresh_token=refresh_token)
+            return await cls._authenticate_and_get_token_data(
+                client,
+                "post",
+                constants.TOKEN_URL,
+                data=payload.to_dict(),
+            )
+
+        return await cls._initialize_client(
+            auth_callable,
+            lambda r: {"refresh_token": refresh_token},
+            on_token_refresh,
+            httpx_client,
+            timeout=timeout,
+            proxy=proxy,
+            **httpx_kwargs,
+        )
+
+    async def refresh_token(self) -> models.RefreshTokenResult:
+        """Manually refreshes the access token.
+
+        This is useful if you want to proactively manage the token's lifecycle
+        instead of waiting for an automatic refresh on an API call.
+
+        Returns:
+            The result of the token refresh operation.
+
+        Example:
+            ```python
+            try:
+                result = await client.refresh_token()
+                print(f"Token successfully refreshed. New token expires in {result.expires_in} seconds.")
+            except AuthenticationError as e:
+                print(f"Failed to refresh token: {e}")
+            ```
+
+        """
+        return await self._refresh_access_token()
+
+    async def get_settings(self) -> models.UserSettings:
+        """Get the user settings.
+
+        Returns:
+            An object containing the user's account settings.
+
+        Example:
+            ```python
+            settings = await client.get_settings()
+            print(settings.account.username)
+            ```
+
+        """
+        # Prefer cookie auth for get_settings [cookie-auth]
+        if self._token.cookies is not None:
+            response_data = await self._cookie_api_request("get", "/account/settings")
+        else:
+            response_data = await self._api_request("get", "get_settings")
+        return models.UserSettings.from_dict(response_data)
+
+    async def get_memory_bandwidth(self) -> models.MemoryBandwidth:
+        """Get the memory and bandwidth usage.
+
+        Returns:
+            An object containing memory and bandwidth details.
+
+        Example:
+            ```python
+            usage = await client.get_memory_bandwidth()
+            print(f"Space used: {usage.space_used}/{usage.space_max}")
+            ```
+
+        """
+        response_data = await self._api_request("get", "get_memory_bandwidth")
+        return models.MemoryBandwidth.from_dict(response_data)
+
+    async def list_contents(self, folder_id: str = "0") -> models.ListContentsResult:
+        """List the contents of a folder.
+
+        Args:
+            folder_id (str, optional): The folder id to list the contents of. Defaults to root folder.
+
+        Returns:
+            An object containing the contents of the folder.
+
+        Example:
+            ```python
+            response = await client.list_contents()
+            print(response)
+            ```
+
+        """
+        payload = _request_models.ListContentsPayload(content_id=folder_id)
+        # Prefer cookie auth for list_contents [cookie-auth]
+        if self._token.cookies is not None:
+            response_data = await self._cookie_api_request(
+                "get", f"/fs/folder/{folder_id}/items"
+            )
+        else:
+            response_data = await self._api_request(
+                "post", "list_contents", data=payload.to_dict()
+            )
+        return models.ListContentsResult.from_dict(response_data)
+
+    async def add_torrent(
+        self,
+        magnet_link: Optional[str] = None,
+        torrent_file: Optional[str] = None,
+        wishlist_id: Optional[str] = None,
+        folder_id: str = "-1",
+        force_upload: bool = False,
+    ) -> models.AddTorrentResult:
+        """Add a torrent to the seedr account for downloading.
+
+        Args:
+            magnet_link (str, optional): The magnet link of the torrent.
+            torrent_file (str, optional): Remote or local path of the torrent file.
+            wishlist_id (str, optional): The ID of a wishlist item to add.
+            folder_id (str, optional): The folder ID to add the torrent to. Defaults to root ('-1').
+            force_upload (bool, optional): When True, downloads the torrent file from the URL
+                and uploads it directly instead of passing the URL to the API. Useful for
+                URLs that the server cannot fetch (e.g. Cloudflare-protected). Defaults to False.
+
+        Returns:
+            An object containing the result of the add torrent operation.
+
+        Example:
+            ```python
+            # Add by magnet link
+            result = await client.add_torrent(magnet_link="magnet:?xt=urn:btih:...")
+            print(result.title)
+
+            # Add from a local .torrent file
+            result = await client.add_torrent(torrent_file="/path/to/your/file.torrent")
+            print(result.title)
+
+            # Force download and upload for protected URLs
+            result = await client.add_torrent(torrent_file="https://...", force_upload=True)
+            ```
+
+        """
+        # Prefer cookie auth for add_torrent [cookie-auth]
+        if self._token.cookies is not None:
+            cookie_folder = "0" if folder_id == "-1" else folder_id
+            data: Dict[str, Any] = {"type": "torrent"}
+            files = None
+            if magnet_link:
+                data["torrent_magnet"] = magnet_link
+            elif wishlist_id:
+                data["wishlist_id"] = wishlist_id
+            elif torrent_file:
+                if not force_upload and torrent_file.startswith(
+                    ("http://", "https://")
+                ):
+                    data["torrent_url"] = torrent_file
+                else:
+                    files = await self._read_torrent_file_async(torrent_file)
+            if files:
+                data["folder"] = cookie_folder
+            else:
+                data["folder_id"] = cookie_folder
+            response_data = await self._cookie_api_request(
+                "post", "/task", data=data, files=files
+            )
+        else:
+            payload = _request_models.AddTorrentPayload(
+                torrent_magnet=magnet_link,
+                wishlist_id=wishlist_id,
+                folder_id=folder_id,
+            )
+            files = {}
+            if torrent_file:
+                files = await self._read_torrent_file_async(torrent_file)
+            response_data = await self._api_request(
+                "post", "add_torrent", data=payload.to_dict(), files=files
+            )
+        return models.AddTorrentResult.from_dict(response_data)
+
+    async def scan_page(self, url: str) -> models.ScanPageResult:
+        """Scan a page for torrents and magnet links.
+
+        Args:
+            url (str): The URL of the page to scan.
+
+        Returns:
+            An object containing the list of torrents found on the page.
+
+        Example:
+            ```python
+            result = await client.scan_page(url='some_torrent_page_url')
+            for torrent in result.torrents:
+                print(torrent.title)
+            ```
+
+        """
+        payload = _request_models.ScanPagePayload(url=url)
+        response_data = await self._api_request(
+            "post", "scan_page", data=payload.to_dict()
+        )
+        return models.ScanPageResult.from_dict(response_data)
+
+    async def fetch_file(self, file_id: str) -> models.FetchFileResult:
+        """Create a link of a file.
+
+        Args:
+            file_id (str): The file id to fetch. This is the `folder_file_id` from the `list_contents` method.
+
+        Returns:
+            An object containing the file details and download URL.
+
+        Example:
+            ```python
+            result = await client.fetch_file(file_id='12345')
+            print(f"Download URL: {result.url}")
+            ```
+
+        """
+        payload = _request_models.FetchFilePayload(folder_file_id=file_id)
+        response_data = await self._api_request(
+            "post", "fetch_file", data=payload.to_dict()
+        )
+        return models.FetchFileResult.from_dict(response_data)
+
+    async def create_archive(self, folder_id: str) -> models.CreateArchiveResult:
+        """Create an archive link of a folder.
+
+        Args:
+            folder_id (str): The folder id to create the archive of.
+
+        Returns:
+            An object containing the result of the archive creation.
+
+        Example:
+            ```python
+            result = await client.create_archive(folder_id='12345')
+            print(f"Archive URL: {result.archive_url}")
+            ```
+
+        """
+        payload = _request_models.CreateArchivePayload(folder_id=folder_id)
+        response_data = await self._api_request(
+            "post", "create_empty_archive", data=payload.to_dict()
+        )
+        return models.CreateArchiveResult.from_dict(response_data)
+
+    async def search_files(self, query: str) -> models.Folder:
+        """Search for files.
+
+        Args:
+            query (str): The query to search for.
+
+        Returns:
+            An object containing the search results.
+
+        Example:
+            ```python
+            results = await client.search_files(query='harry potter')
+            for f in results.folders:
+                print(f"Found folder: {f.name}")
+            ```
+
+        """
+        payload = _request_models.SearchFilesPayload(search_query=query)
+        response_data = await self._api_request(
+            "post", "search_files", data=payload.to_dict()
+        )
+        return models.Folder.from_dict(response_data)
+
+    async def add_folder(self, name: str) -> models.APIResult:
+        """Add a folder.
+
+        Args:
+            name (str): Folder name to add.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            result = await client.add_folder(name='New Folder')
+            if result.result:
+                print("Folder created successfully.")
+            ```
+
+        """
+        payload = _request_models.AddFolderPayload(name=name)
+        response_data = await self._api_request(
+            "post", "add_folder", data=payload.to_dict()
+        )
+        return models.APIResult.from_dict(response_data)
+
+    async def rename_file(self, file_id: str, rename_to: str) -> models.APIResult:
+        """Rename a file.
+
+        Args:
+            file_id (str): The file id to rename.
+            rename_to (str): The new name of the file.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            result = await client.rename_file(file_id='12345', rename_to='newName')
+            if result.result:
+                print("File renamed successfully.")
+            ```
+
+        """
+        payload = _request_models.RenameFilePayload(
+            rename_to=rename_to, file_id=file_id
+        )
+        response_data = await self._api_request(
+            "post", "rename", data=payload.to_dict()
+        )
+        return models.APIResult.from_dict(response_data)
+
+    async def rename_folder(self, folder_id: str, rename_to: str) -> models.APIResult:
+        """Rename a folder.
+
+        Args:
+            folder_id (str): The folder id to rename.
+            rename_to (str): The new name of the folder.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            result = await client.rename_folder(folder_id='12345', rename_to='newName')
+            if result.result:
+                print("Folder renamed successfully.")
+            ```
+
+        """
+        payload = _request_models.RenameFolderPayload(
+            rename_to=rename_to, folder_id=folder_id
+        )
+        response_data = await self._api_request(
+            "post", "rename", data=payload.to_dict()
+        )
+        return models.APIResult.from_dict(response_data)
+
+    async def delete_file(self, file_id: str) -> models.APIResult:
+        """Delete a file.
+
+        Args:
+            file_id (str): The file id to delete.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            response = await client.delete_file(file_id='12345')
+            print(response)
+            ```
+
+        """
+        return await self._delete_api_item("file", file_id)
+
+    async def delete_folder(self, folder_id: str) -> models.APIResult:
+        """Delete a folder.
+
+        Args:
+            folder_id (str): The folder id to delete.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            response = await client.delete_folder(folder_id='12345')
+            print(response)
+            ```
+
+        """
+        return await self._delete_api_item("folder", folder_id)
+
+    async def delete_torrent(self, torrent_id: str) -> models.APIResult:
+        """Delete an active downloading torrent.
+
+        Args:
+            torrent_id (str): The torrent id to delete.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            response = await client.delete_torrent(torrent_id='12345')
+            print(response)
+            ```
+
+        """
+        return await self._delete_api_item("torrent", torrent_id)
+
+    async def delete_wishlist(self, wishlist_id: str) -> models.APIResult:
+        """Delete an item from the wishlist.
+
+        Args:
+            wishlist_id (str): The wishlistId of item to delete.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            result = await client.delete_wishlist(wishlist_id='12345')
+            ```
+
+        """
+        payload = _request_models.RemoveWishlistPayload(id=wishlist_id)
+        response_data = await self._api_request(
+            "post", "remove_wishlist", data=payload.to_dict()
+        )
+        return models.APIResult.from_dict(response_data)
+
+    # Cookie-only: batch delete [cookie-auth]
+    async def batch_delete(
+        self,
+        file_ids: Optional[List[str]] = None,
+        folder_ids: Optional[List[str]] = None,
+        torrent_ids: Optional[List[str]] = None,
+    ) -> models.APIResult:
+        """Delete multiple items at once. Requires cookie authentication.
+
+        Args:
+            file_ids: List of file IDs to delete.
+            folder_ids: List of folder IDs to delete.
+            torrent_ids: List of torrent IDs to delete.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            result = await client.batch_delete(
+                folder_ids=["123", "456"],
+                file_ids=["789"],
+            )
+            ```
+
+        """
+        if self._token.cookies is None:
+            raise AuthenticationError("batch_delete requires cookie authentication.")
+        items = []
+        for id in file_ids or []:
+            items.append({"type": "file", "id": id})
+        for id in folder_ids or []:
+            items.append({"type": "folder", "id": id})
+        for id in torrent_ids or []:
+            items.append({"type": "torrent", "id": id})
+        if not items:
+            raise ValueError("At least one ID must be provided.")
+        data = {"delete_arr": json.dumps(items)}
+        response_data = await self._cookie_api_request(
+            "post", "/fs/batch/delete", data=data
+        )
+        return models.APIResult.from_dict(response_data)
+
+    async def get_devices(self) -> List[models.Device]:
+        """Get the devices connected to the seedr account.
+
+        Returns:
+            A list of devices connected to the account.
+
+        Example:
+            ```python
+            devices = await client.get_devices()
+            for device in devices:
+                print(device.client_name)
+            ```
+
+        """
+        response_data = await self._api_request("get", "get_devices")
+        devices_data = response_data.get("devices", [])
+        return [models.Device.from_dict(d) for d in devices_data]
+
+    async def get_torrent_progress(self, progress_url: str) -> models.TorrentProgress:
+        """Fetch and parse the progress data for an active torrent download.
+
+        Args:
+            progress_url (str): The progress URL from a `Torrent` object's `progress_url` field.
+
+        Returns:
+            A `TorrentProgress` object containing download stats.
+
+        Example:
+            ```python
+            contents = await client.list_contents()
+            for torrent in contents.torrents:
+                if torrent.progress_url:
+                    progress = await client.get_torrent_progress(torrent.progress_url)
+                    print(f"{progress.title}: {progress.progress:.1f}%")
+            ```
+
+        """
+        url = httpx.URL(progress_url).copy_remove_param("callback")
+        response = await self._make_http_request(self._client, "get", str(url))
+        try:
+            data = response.json()
+        except json.JSONDecodeError as e:
+            raise JSONDecodeAPIError(response=response) from e
+        return models.TorrentProgress.from_dict(data)
+
+    async def change_name(self, name: str, password: str) -> models.APIResult:
+        """Change the name of the account.
+
+        Args:
+            name (str): The new name of the account.
+            password (str): The password of the account.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            result = await client.change_name(name='New Name', password='password')
+            ```
+
+        """
+        payload = _request_models.ChangeNamePayload(fullname=name, password=password)
+        response_data = await self._api_request(
+            "post", "user_account_modify", data=payload.to_dict()
+        )
+        return models.APIResult.from_dict(response_data)
+
+    async def change_password(
+        self, old_password: str, new_password: str
+    ) -> models.APIResult:
+        """Change the password of the account.
+
+        Args:
+            old_password (str): The old password of the account.
+            new_password (str): The new password of the account.
+
+        Returns:
+            An object indicating the result of the operation.
+
+        Example:
+            ```python
+            result = await client.change_password(old_password='old', new_password='new')
+            ```
+
+        """
+        payload = _request_models.ChangePasswordPayload(
+            password=old_password,
+            new_password=new_password,
+            new_password_repeat=new_password,
+        )
+        response_data = await self._api_request(
+            "post", "user_account_modify", data=payload.to_dict()
+        )
+        return models.APIResult.from_dict(response_data)
+
+    async def _api_request(
+        self,
+        http_method: str,
+        func: str,
+        files: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Handles the core logic for making authenticated API requests, including token refreshes."""
+        if not (
+            self._token.access_token
+            or self._token.refresh_token
+            or self._token.device_code
+        ):
+            raise AuthenticationError(
+                "This method requires OAuth authentication (from_password or from_device_code)."
+            )
+
+        if not self._token.access_token:
+            await self._refresh_access_token()
+
+        url = kwargs.pop("url", constants.RESOURCE_URL)
+        params = kwargs.pop("params", {})
+        if "access_token" not in params:
+            params["access_token"] = self._token.access_token
+        if func:
+            params["func"] = func
+
+        response = await self._make_http_request(
+            self._client, http_method, url, params=params, files=files, **kwargs
+        )
+        try:
+            data = response.json()
+        except json.JSONDecodeError as e:
+            raise JSONDecodeAPIError(response=response) from e
+
+        if isinstance(data, dict) and data.get("error") == "expired_token":
+            await self._refresh_access_token()
+            params["access_token"] = self._token.access_token
+            response = await self._make_http_request(
+                self._client, http_method, url, params=params, files=files, **kwargs
+            )
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                raise JSONDecodeAPIError(response=response) from e
+
+        if response.is_client_error:
+            if response.status_code == 401:
+                raise AuthenticationError("Authentication failed.", response=response)
+            raise APIError("API request failed.", response=response)
+
+        if isinstance(data, dict) and data.get("result", True) is not True:
+            raise APIError("API operation failed.", response=response)
+
+        return data
+
+    # ── Cookie Authentication internals [cookie-auth] ───────────────────────
+
+    async def _cookie_api_request(
+        self,
+        method: str,
+        path: str,
+        data: Optional[Dict[str, Any]] = None,
+        files: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Sends an authenticated request using cookies, with automatic session refresh on 401."""
+        url = f"{constants.COOKIE_BASE_URL}{path}"
+        request_kwargs: Dict[str, Any] = {"headers": constants.COOKIE_HEADERS}
+        if method != "get" and data is not None:
+            request_kwargs["data"] = {k: v for k, v in data.items() if v is not None}
+        if files:
+            request_kwargs["files"] = files
+
+        response = await self._make_http_request(
+            self._client, method, url, **request_kwargs
+        )
+
+        if response.status_code == 401:
+            await self._refresh_cookie_session()
+            response = await self._make_http_request(
+                self._client, method, url, **request_kwargs
+            )
+
+        try:
+            resp_data = response.json()
+        except json.JSONDecodeError as e:
+            raise JSONDecodeAPIError(response=response) from e
+
+        if response.is_client_error:
+            raise APIError("API request failed.", response=response)
+
+        # Normalize 'success' → 'result' for cookie API responses
+        if (
+            isinstance(resp_data, dict)
+            and "success" in resp_data
+            and "result" not in resp_data
+        ):
+            resp_data["result"] = resp_data.pop("success")
+
+        if isinstance(resp_data, dict) and resp_data.get("result", True) is not True:
+            raise APIError("API operation failed.", response=response)
+
+        return resp_data
+
+    @staticmethod
+    async def _cookie_login(
+        client: httpx.AsyncClient,
+        username: str,
+        password: str,
+        token: Optional[Token] = None,
+        on_token_refresh: Optional[Callable[[Token], None]] = None,
+    ) -> Token:
+        """Performs cookie-based login, merges with existing token if provided, and fires the callback."""
+        payload = _request_models.CookieLoginPayload(
+            username=username, password=password
+        )
+        response = await AsyncSeedr._make_http_request(
+            client,
+            "post",
+            constants.COOKIE_LOGIN_URL,
+            json=payload.to_dict(),
+            headers=constants.COOKIE_HEADERS,
+        )
+
+        if not response.is_success:
+            raise AuthenticationError(
+                "Cookie authentication failed.", response=response
+            )
+
+        cookies = {c.name: c.value for c in response.cookies.jar}
+        client.cookies.clear()
+        client.cookies.update(cookies)
+        if not cookies:
+            raise AuthenticationError(
+                "No cookies received from login response.", response=response
+            )
+
+        if token is not None:
+            new_token = replace(token, cookies=cookies)
+        else:
+            new_token = Token(cookies=cookies)
+        if on_token_refresh:
+            if inspect.iscoroutinefunction(on_token_refresh):
+                await on_token_refresh(new_token)
+            else:
+                await anyio.to_thread.run_sync(on_token_refresh, new_token)
+        return new_token
+
+    async def _refresh_cookie_session(self) -> None:
+        """Re-authenticates using stored credentials to get fresh cookies."""
+        if not self._username or not self._password:
+            raise AuthenticationError(
+                "No credentials available to refresh cookie session."
+            )
+        self._token = await self._cookie_login(
+            self._client,
+            self._username,
+            self._password,
+            self._token,
+            self._on_token_refresh,
+        )
+
+    async def _refresh_access_token(self) -> models.RefreshTokenResult:
+        """Refreshes the access token using the refresh token or device code."""
+        if self._token.refresh_token:
+            payload = _request_models.RefreshTokenPayload(
+                refresh_token=self._token.refresh_token
+            )
+            response = await self._make_http_request(
+                self._client, "post", constants.TOKEN_URL, data=payload.to_dict()
+            )
+        elif self._token.device_code:
+            params = _request_models.DeviceCodeAuthParams(
+                device_code=self._token.device_code
+            )
+            response = await self._make_http_request(
+                self._client,
+                "get",
+                constants.DEVICE_AUTHORIZE_URL,
+                params=params.to_dict(),
+            )
+        else:
+            raise AuthenticationError(
+                "No refresh token or device code available to refresh the session."
+            )
+
+        if not response.is_success:
+            raise AuthenticationError("Failed to refresh token.", response=response)
+
+        try:
+            response_data = response.json()
+        except json.JSONDecodeError as e:
+            raise JSONDecodeAPIError(response=response) from e
+
+        if "access_token" not in response_data:
+            raise AuthenticationError(
+                "Token refresh failed. The response did not contain a new access token.",
+                response=response,
+            )
+
+        self._token = replace(self._token, access_token=response_data["access_token"])
+        if self._on_token_refresh:
+            if inspect.iscoroutinefunction(self._on_token_refresh):
+                await self._on_token_refresh(self._token)
+            else:
+                await anyio.to_thread.run_sync(self._on_token_refresh, self._token)
+
+        return models.RefreshTokenResult.from_dict(response_data)
+
+    async def _read_torrent_file_async(self, torrent_file: str) -> Dict[str, Any]:
+        """Reads a torrent file from a local path or a remote URL into memory."""
+        if torrent_file.startswith(("http://", "https://")):
+            async with httpx.AsyncClient() as client:
+                response = await client.get(torrent_file)
+                response.raise_for_status()
+                return {"torrent_file": response.content}
+        else:
+            path = anyio.Path(torrent_file)
+            content = await path.read_bytes()
+            return {"torrent_file": content}
+
+    async def _delete_api_item(
+        self, item_type: Literal["file", "folder", "torrent"], item_id: str
+    ) -> models.APIResult:
+        """Constructs and sends a request to delete a specific item (file, folder, etc.)."""
+        payload = _request_models.DeleteItemPayload(
+            item_type=item_type, item_id=item_id
+        )
+        response_data = await self._api_request(
+            "post", "delete", data=payload.to_dict()
+        )
+        return models.APIResult.from_dict(response_data)
+
+    @classmethod
+    async def _initialize_client(
+        cls: Type["AsyncSeedr"],
+        auth_callable: Callable[
+            [httpx.AsyncClient], Coroutine[Any, Any, Dict[str, Any]]
+        ],
+        token_callable: Callable[[Dict[str, Any]], Dict[str, Any]],
+        on_token_refresh: Optional[Callable[[Token], None]],
+        httpx_client: Optional[httpx.AsyncClient],
+        timeout: float = 30.0,
+        proxy: Optional[Dict[str, str]] = None,
+        **httpx_kwargs: Any,
+    ) -> "AsyncSeedr":
+        """A factory helper that orchestrates the authentication process and constructs the client."""
+        httpx_kwargs.setdefault("timeout", timeout)
+        httpx_kwargs.setdefault("proxy", proxy)
+        client = httpx_client or httpx.AsyncClient(**httpx_kwargs)
+        success = False
+        try:
+            response_data = await auth_callable(client)
+            token_extras = token_callable(response_data)
+            token = Token(
+                access_token=response_data["access_token"],
+                refresh_token=response_data.get("refresh_token"),
+                **token_extras,
+            )
+            instance = cls(
+                token,
+                on_token_refresh=on_token_refresh,
+                httpx_client=client,
+                **httpx_kwargs,
+            )
+            success = True
+            return instance
+        finally:
+            if httpx_client is None and not success:
+                await client.aclose()
+
+    @classmethod
+    async def _authenticate_and_get_token_data(
+        cls: Type["AsyncSeedr"],
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        **httpx_kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Handles the common logic for making an authentication request."""
+        response = await cls._make_http_request(client, method, url, **httpx_kwargs)
+
+        if not response.is_success:
+            raise AuthenticationError("Authentication failed.", response=response)
+
+        try:
+            data = response.json()
+            if isinstance(data, dict) and data.get("error") in [
+                "authorization_pending"
+            ]:
+                raise AuthenticationError(
+                    "Authentication failed.",
+                    response=response,
+                )
+            return data
+        except json.JSONDecodeError as e:
+            raise JSONDecodeAPIError(response=response) from e
+
+    @staticmethod
+    async def _make_http_request(
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Performs the raw HTTP request, handles network/server errors, and returns the response."""
+        try:
+            response = await client.request(method, url, **kwargs)
+
+            if response.is_server_error:
+                raise ServerError(response=response)
+
+            return response
+        except httpx.RequestError as e:
+            raise NetworkError(str(e)) from e
+
+    async def close(self) -> None:
+        """Closes the underlying httpx client if it was created by this instance."""
+        if self._manages_client_lifecycle:
+            await self._client.aclose()
+
+    async def __aenter__(self) -> "AsyncSeedr":
+        """Return self; lifecycle is purely on `__aexit__`."""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Close the underlying httpx client if this instance owns it."""
+        await self.close()

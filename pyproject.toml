@@ -43,15 +43,31 @@ source = "vcs"
 path = "scripts/hatch_build.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["seedrcc"]
+packages = ["src/seedrcc"]
 
-[tool.nizm.hooks]
-generate_sync = { cmd = "uv run python scripts/gen_sync.py", glob = ["seedrcc/async_client.py", "seedrcc/public/_async/**/*.py", "scripts/gen_sync.py"], outputs = ["seedrcc/client.py", "seedrcc/public/_sync/**/*.py"] }
-ruff = { cmd = "uvx ruff check --fix {staged_files} && uvx ruff format {staged_files}", glob = "*.py" }
+[tool.hatch.build.targets.sdist]
+include = ["src/seedrcc/**", "scripts/**", "README.md", "LICENSE", "pyproject.toml"]
+
+[tool.nizm.hooks.gen_sync]
+cmd = "uv run python scripts/gen_sync.py"
+glob = [
+    "src/seedrcc/legacy/async_client.py",
+    "src/seedrcc/_async/**/*.py",
+    "scripts/gen_sync.py",
+]
+outputs = [
+    "src/seedrcc/legacy/client.py",
+    "src/seedrcc/_sync/**/*.py",
+]
+
+[tool.nizm.hooks.ruff]
+cmd = "uvx ruff check --fix {staged_files} && uvx ruff format {staged_files}"
+glob = "*.py"
 
 [tool.ruff.lint]
-select = ["F", "I"]
-fixable = ["F401", "I"]
+select = ["F", "I", "D"]
+fixable = ["F401", "I", "D"]
+pydocstyle = { convention = "google" }
 
 [dependency-groups]
 dev = [

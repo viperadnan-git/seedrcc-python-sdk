@@ -62,7 +62,9 @@ def _rewrite_prose(text: str) -> str:
 
 
 class _ProseRule(unasync.Rule):
-    """``unasync.Rule`` extended with:
+    """Extended ``unasync.Rule``.
+
+    Adds:
 
     - Docstring/comment regex rewriting (``_PROSE_PATTERNS``) — the base class
       only does whole-string lookups, so prose inside docstrings/comments needs
@@ -98,8 +100,11 @@ class _ProseRule(unasync.Rule):
 
 
 def _strip_anyio(src: str) -> str:
-    """Remove ``import anyio``, swap ``anyio.sleep`` → ``time.sleep``,
-    ``anyio.Path`` → ``pathlib.Path``, and ensure the new imports are present."""
+    """Drop ``anyio`` in favour of stdlib equivalents.
+
+    Removes ``import anyio``, swaps ``anyio.sleep`` → ``time.sleep`` and
+    ``anyio.Path`` → ``pathlib.Path``, and ensures the new imports are present.
+    """
     if "anyio" not in src:
         return src
 
@@ -125,8 +130,11 @@ def _strip_anyio(src: str) -> str:
 
 
 def _collapse_iscoroutinefunction(src: str) -> str:
-    """Collapse ``if inspect.iscoroutinefunction(cb): cb(x); else: run_sync(cb, x)``
-    (after await-stripping) into a direct ``cb(x)`` call."""
+    """Collapse the ``iscoroutinefunction`` dispatch into a direct call.
+
+    Matches ``if inspect.iscoroutinefunction(cb): cb(x); else: run_sync(cb, x)``
+    (after await-stripping) and replaces it with ``cb(x)``.
+    """
     return re.sub(
         r"( +)if (\S+):\n"
         r"\1    if inspect\.iscoroutinefunction\(\2\):\n"
@@ -139,9 +147,11 @@ def _collapse_iscoroutinefunction(src: str) -> str:
 
 
 def _strip_async_typing(src: str) -> str:
-    """Drop ``Coroutine`` / ``Awaitable`` from ``typing`` imports — they survive
-    the token rewrite because they're plain identifiers, but the sync mirror
-    never uses them after the Callable signatures are flattened."""
+    """Drop ``Coroutine`` / ``Awaitable`` from ``typing`` imports.
+
+    They survive the token rewrite because they're plain identifiers, but the
+    sync mirror never uses them after the Callable signatures are flattened.
+    """
     for name in ("Coroutine", "Awaitable"):
         src = re.sub(rf"^\s+{name},?\n", "", src, flags=re.MULTILINE)
         src = re.sub(rf"(from typing import [^\n]*?){name},\s*", r"\1", src)
@@ -150,9 +160,12 @@ def _strip_async_typing(src: str) -> str:
 
 
 def _flatten_async_callable_signatures(src: str) -> str:
-    """``Callable[[httpx.Client], Coroutine[Any, Any, T]]`` → ``Callable[[httpx.Client], T]``
+    """Unwrap ``Coroutine``/``Awaitable`` from ``Callable`` return types.
+
+    ``Callable[[httpx.Client], Coroutine[Any, Any, T]]`` → ``Callable[[httpx.Client], T]``
     and the same for ``Awaitable[T]``. These appear in factory-helper signatures
-    where the async source returns an awaitable but the sync mirror returns T."""
+    where the async source returns an awaitable but the sync mirror returns T.
+    """
     src = re.sub(
         r"Callable\[\s*\[httpx\.Client\],\s*Coroutine\[Any,\s*Any,\s*(.*?\])\]\s*\]",
         r"Callable[[httpx.Client], \1]",
@@ -188,11 +201,13 @@ class Pipeline:
         dest: Path,
         post_steps: tuple[Callable[[str], str], ...] = (),
     ) -> None:
+        """Capture the source→dest mapping and its post-process chain."""
         self.source = source
         self.dest = dest
         self.post_steps = post_steps
 
     def post(self, src: str) -> str:
+        """Run `post_steps` over `src` in order, returning the final source."""
         for step in self.post_steps:
             src = step(src)
         return src
@@ -222,7 +237,7 @@ _PUBLIC_SYNC_CLIENT_DOC = '''    """Synchronous client for the Seedr public API.
 
     Example:
         ```python
-        from seedrcc.public import Seedr
+        from seedrcc import Seedr
 
         # First run: mint token via full headless flow, persist to .cache/seedr_token.json
         with Seedr.from_credentials("user", "pass") as client:
@@ -248,10 +263,12 @@ def _legacy_class_doc_swap(src: str) -> str:
 
 
 def _read_torrent_file_rewrite(src: str) -> str:
-    """Swap the async-flavoured torrent reader (`async with httpx.AsyncClient(): ...`)
-    for the sync equivalent. The token rewrite handles the signature and the
-    ``with httpx.Client()`` line, but the body still needs the ``raise_for_status``
-    removed and a simpler ``open()`` for the local-path branch."""
+    """Rewrite the async-flavoured torrent reader to use blocking I/O.
+
+    The token rewrite handles the signature and the ``with httpx.Client()`` line,
+    but the body still needs the ``raise_for_status`` removed and a simpler
+    ``open()`` for the local-path branch.
+    """
     return re.sub(
         r"    def _read_torrent_file\(self, torrent_file: str\) -> Dict\[str, Any\]:\n"
         r".*?(?=\n    def |\n    @|\n    class |\Z)",
@@ -284,10 +301,12 @@ def _public_client_doc_swap(src: str) -> str:
 # Steps shared by every generated file.
 _COMMON_STEPS: tuple[Callable[[str], str], ...] = (_strip_anyio,)
 
+_PKG = ROOT / "src" / "seedrcc"
+
 PIPELINES: tuple[Pipeline, ...] = (
     Pipeline(
-        source=ROOT / "seedrcc" / "async_client.py",
-        dest=ROOT / "seedrcc" / "client.py",
+        source=_PKG / "legacy" / "async_client.py",
+        dest=_PKG / "legacy" / "client.py",
         post_steps=(
             _collapse_iscoroutinefunction,
             _flatten_async_callable_signatures,
@@ -299,8 +318,8 @@ PIPELINES: tuple[Pipeline, ...] = (
         ),
     ),
     Pipeline(
-        source=ROOT / "seedrcc" / "public" / "_async",
-        dest=ROOT / "seedrcc" / "public" / "_sync",
+        source=_PKG / "_async",
+        dest=_PKG / "_sync",
         post_steps=(
             _flatten_async_callable_signatures,
             *_COMMON_STEPS,
@@ -430,6 +449,7 @@ def regenerate() -> list[Path]:
 
 
 def cli(argv: list[str] | None = None) -> int:
+    """Command-line entry point: regenerate (default) or `--check` for drift."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--check",
