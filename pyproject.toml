@@ -29,7 +29,6 @@ dependencies = [
 
 [project.urls]
 "Homepage" = "https://github.com/viperadnan-git/seedrcc-python-sdk"
-"Documentation" = "https://seedrcc.readthedocs.io/en/latest/"
 "Bug Tracker" = "https://github.com/viperadnan-git/seedrcc-python-sdk/issues"
 
 [build-system]
@@ -74,10 +73,4 @@ dev = [
     "ruff>=0.15.5",
     "unasync>=0.6",
     "tokenize-rt>=6.0",
-]
-docs = [
-  "griffe-fieldz>=0.3.0",
-  "mkdocs>=1.6.1",
-  "mkdocs-material>=9.6.17",
-  "mkdocstrings[python]>=0.30.0",
 ]

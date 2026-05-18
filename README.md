@@ -108,10 +108,6 @@ While Seedr.cc offers a premium [API](https://www.seedr.cc/docs/api/rest/v1/), i
 
 Further analysis of the main Seedr website's network traffic revealed a very similar API pattern, which made it possible to implement the full feature set. Because the library uses the same API as the official tools, it works reliably for all users.
 
-## 📚 Documentation
-
-For a complete guide to every available method, data model, and advanced features like saving sessions, please see the **[Full Documentation](https://seedrcc.readthedocs.io/)**.
-
 ## 🙌 Contributing
 
 Contributions are welcome! If you'd like to help, please feel free to fork the repository, create a feature branch, and open a pull request.
