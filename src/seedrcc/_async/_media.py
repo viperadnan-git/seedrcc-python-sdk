@@ -38,8 +38,11 @@ class AsyncMediaMixin:
 
     async def create_archive(self: AsyncClientProtocol, folder_id: Union[int, str]):
         """POST /download/archive — request archive creation for a folder."""
+        payload = _request_models.CreateArchiveRequest(
+            archive_arr=[_request_models.ArchiveItem(type="folder", id=folder_id)]
+        )
         data = await self._request(
-            "post", "/download/archive", json={"folder_id": folder_id}
+            "post", "/download/archive", json=payload.model_dump(exclude_none=True)
         )
         return models.Archive.model_validate(data or {})
 

@@ -38,7 +38,12 @@ class MediaMixin:
 
     def create_archive(self: ClientProtocol, folder_id: Union[int, str]):
         """POST /download/archive — request archive creation for a folder."""
-        data = self._request("post", "/download/archive", json={"folder_id": folder_id})
+        payload = _request_models.CreateArchiveRequest(
+            archive_arr=[_request_models.ArchiveItem(type="folder", id=folder_id)]
+        )
+        data = self._request(
+            "post", "/download/archive", json=payload.model_dump(exclude_none=True)
+        )
         return models.Archive.model_validate(data or {})
 
     def init_archive(self: ClientProtocol, uuid: str):

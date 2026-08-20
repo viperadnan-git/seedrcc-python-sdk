@@ -62,6 +62,18 @@ class SetUnwantedRequest(_BaseRequest):
     unwanted: List[int]
 
 
+# ── Archives ─────────────────────────────────────────────────────────────────
+
+
+class ArchiveItem(_BaseRequest):
+    type: str
+    id: Union[int, str]
+
+
+class CreateArchiveRequest(_BaseRequest):
+    archive_arr: List[ArchiveItem]
+
+
 # ── PATs ─────────────────────────────────────────────────────────────────────
 
 
