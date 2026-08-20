@@ -36,11 +36,21 @@ class MediaMixin:
 
     # ── Archives ────────────────────────────────────────────────────────────
 
-    def create_archive(self: ClientProtocol, folder_id: Union[int, str]):
-        """POST /download/archive — request archive creation for a folder."""
-        payload = _request_models.CreateArchiveRequest(
-            archive_arr=[_request_models.ArchiveItem(type="folder", id=folder_id)]
+    def create_archive(
+        self: ClientProtocol,
+        folder_id: Optional[Union[int, str]] = None,
+        *,
+        file_id: Optional[Union[int, str]] = None,
+    ):
+        """POST /download/archive — request archive creation for a folder or file."""
+        if (folder_id is None) == (file_id is None):
+            raise ValueError("pass exactly one of folder_id or file_id")
+        item = (
+            _request_models.ArchiveItem(type="folder", id=folder_id)
+            if folder_id is not None
+            else _request_models.ArchiveItem(type="file", id=file_id)
         )
+        payload = _request_models.CreateArchiveRequest(archive_arr=[item])
         data = self._request(
             "post", "/download/archive", json=payload.model_dump(exclude_none=True)
         )
